@@ -24,6 +24,10 @@ namespace HandBrake.ApplicationServices.Interop.Model.Encoding
         [ShortName("x264_10bit")]
         X264_10,
 
+        [DisplayName("H.264 (NVENC)")]
+        [ShortName("x264_nvenc")]
+        X264_NVENC,
+
         [DisplayName("H.264 (Intel QSV)")]
         [ShortName("qsv_h264")]
         QuickSync,
