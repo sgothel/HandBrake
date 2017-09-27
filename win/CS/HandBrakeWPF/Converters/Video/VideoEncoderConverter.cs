@@ -59,6 +59,11 @@ namespace HandBrakeWPF.Converters.Video
                     encoders.Remove(VideoEncoder.X264_10);
                 }
 
+                if (HandBrakeEncoderHelpers.VideoEncoders.All(a => a.ShortName != EnumHelper<VideoEncoder>.GetShortName(VideoEncoder.X264_NVENC)))
+                {
+                    encoders.Remove(VideoEncoder.X264_NVENC);
+                }
+
                 if (HandBrakeEncoderHelpers.VideoEncoders.All(a => a.ShortName != EnumHelper<VideoEncoder>.GetShortName(VideoEncoder.X265_10)))
                 {
                     encoders.Remove(VideoEncoder.X265_10);
