@@ -47,7 +47,7 @@ namespace HandBrakeWPF.Converters.Video
             EncodeTask task = value as EncodeTask;
             if (task != null)
             {
-                string rfqp = task.VideoEncoder == VideoEncoder.X264 || task.VideoEncoder == VideoEncoder.X264_10 || task.VideoEncoder == VideoEncoder.X264_NVENC || task.VideoEncoder == VideoEncoder.X265 
+                string rfqp = task.VideoEncoder == VideoEncoder.X264 || task.VideoEncoder == VideoEncoder.X264_10 || task.VideoEncoder == VideoEncoder.H264_NVENC || task.VideoEncoder == VideoEncoder.HEVC_NVENC || task.VideoEncoder == VideoEncoder.X265 
                     || task.VideoEncoder == VideoEncoder.X265_10 || task.VideoEncoder == VideoEncoder.X265_12 ? "RF" : "QP";
                 string quality = task.VideoEncodeRateType == VideoEncodeRateType.ConstantQuality ? task.Quality + rfqp : task.VideoBitrate + " kbps";
                 string twoPass = null;
