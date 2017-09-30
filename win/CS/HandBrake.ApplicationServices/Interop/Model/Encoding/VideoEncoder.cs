@@ -25,8 +25,8 @@ namespace HandBrake.ApplicationServices.Interop.Model.Encoding
         X264_10,
 
         [DisplayName("H.264 (NVENC)")]
-        [ShortName("x264_nvenc")]
-        X264_NVENC,
+        [ShortName("h264_nvenc")]
+        H264_NVENC,
 
         [DisplayName("H.264 (Intel QSV)")]
         [ShortName("qsv_h264")]
@@ -55,6 +55,10 @@ namespace HandBrake.ApplicationServices.Interop.Model.Encoding
         [DisplayName("H.265 10-bit (x265)")]
         [ShortName("x265_10bit")]
         X265_10,
+
+        [DisplayName("H.265 (NVENC)")]
+        [ShortName("hevc_nvenc")]
+        HEVC_NVENC,
 
         [DisplayName("H.265 (Intel QSV)")]
         [ShortName("qsv_h265")]
