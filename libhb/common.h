@@ -1197,6 +1197,8 @@ extern hb_work_object_t hb_encca_aac;
 extern hb_work_object_t hb_encca_haac;
 extern hb_work_object_t hb_encavcodeca;
 extern hb_work_object_t hb_reader;
+extern hb_work_object_t hb_h264_nvenc;
+extern hb_work_object_t hb_hevc_nvenc;
 
 #define HB_FILTER_OK      0
 #define HB_FILTER_DELAY   1
