@@ -267,6 +267,7 @@ static int avformatInit( hb_mux_object_t * m )
 
         case HB_VCODEC_FFMPEG_VCE_H264:
         case HB_VCODEC_FFMPEG_NVENC_H264:
+        case HB_VCODEC_FFMPEG_VAAPI_H264:
         case HB_VCODEC_FFMPEG_VT_H264:
             track->st->codecpar->codec_id = AV_CODEC_ID_H264;
             if (job->mux == HB_MUX_AV_MP4 && job->inline_parameter_sets)
@@ -329,12 +330,14 @@ static int avformatInit( hb_mux_object_t * m )
             break;
 
         case HB_VCODEC_FFMPEG_VP8:
+        case HB_VCODEC_FFMPEG_VAAPI_VP8:
             track->st->codecpar->codec_id = AV_CODEC_ID_VP8;
             priv_data                  = NULL;
             priv_size                  = 0;
             break;
 
         case HB_VCODEC_FFMPEG_VP9:
+        case HB_VCODEC_FFMPEG_VAAPI_VP9:
             track->st->codecpar->codec_id = AV_CODEC_ID_VP9;
             priv_data                  = NULL;
             priv_size                  = 0;
@@ -403,6 +406,7 @@ static int avformatInit( hb_mux_object_t * m )
 
         case HB_VCODEC_FFMPEG_VCE_H265:
         case HB_VCODEC_FFMPEG_NVENC_H265:
+        case HB_VCODEC_FFMPEG_VAAPI_H265:
         case HB_VCODEC_FFMPEG_VT_H265:
             track->st->codecpar->codec_id  = AV_CODEC_ID_HEVC;
             if (job->mux == HB_MUX_AV_MP4 && job->inline_parameter_sets)

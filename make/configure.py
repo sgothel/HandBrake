@@ -1417,6 +1417,10 @@ def createCLI( cross = None ):
     grp.add_argument( '--enable-nvenc', dest="enable_nvenc", default=IfHost( True, '*-*-linux*', 'x86_64-*-mingw*', none=False).value, action='store_true', help=(( 'enable %s' %h ) if h != argparse.SUPPRESS else h) )
     grp.add_argument( '--disable-nvenc', dest="enable_nvenc", action='store_false', help=(( 'disable %s' %h ) if h != argparse.SUPPRESS else h) )
 
+    h = IfHost( 'VAAPI video encoder/decoder', '*-*-linux*', '*-*-freebsd*', '*-*-mingw*', none=argparse.SUPPRESS).value
+    grp.add_argument( '--enable-vaapi', dest="enable_vaapi", default=IfHost(True, '*-*-linux*', "*-*-mingw*", none=False).value, action='store_true', help=(( 'enable %s' %h ) if h != argparse.SUPPRESS else h) )
+    grp.add_argument( '--disable-vaapi', dest="enable_vaapi", action='store_false', help=(( 'disable %s' %h ) if h != argparse.SUPPRESS else h) )
+
     h = IfHost( 'Intel QSV video encoder/decoder', '*-*-linux*', '*-*-freebsd*', '*-*-mingw*', none=argparse.SUPPRESS).value
     grp.add_argument( '--enable-qsv', dest="enable_qsv", default=IfHost(True, "*-*-mingw*", none=False).value, action='store_true', help=(( 'enable %s' %h ) if h != argparse.SUPPRESS else h) )
     grp.add_argument( '--disable-qsv', dest="enable_qsv", action='store_false', help=(( 'disable %s' %h ) if h != argparse.SUPPRESS else h) )
@@ -1689,6 +1693,10 @@ try:
     # Disable NVENC on unsupported platforms
     options.enable_nvenc      = IfHost(options.enable_nvenc, '*-*-linux*',
                                        '*-*-mingw*', none=False).value
+    # Disable VAAPI on unsupported platforms
+    options.enable_vaapi      = IfHost(options.enable_vaapi, '*-*-linux*', '*-*-freebsd*',
+                                       '*-*-mingw*', none=False).value
+
     # NUMA is linux only and only needed with x265
     options.enable_numa       = (IfHost(options.enable_numa, '*-*-linux*',
                                         none=False).value
@@ -2007,6 +2015,7 @@ int main()
     doc.add( 'FEATURE.gtk.update.checks', int( not options.disable_gtk_update_checks ))
     doc.add( 'FEATURE.gst',        int( not options.disable_gst ))
     doc.add( 'FEATURE.nvenc',      int( options.enable_nvenc ))
+    doc.add( 'FEATURE.vaapi',      int( options.enable_vaapi ))
     doc.add( 'FEATURE.qsv',        int( options.enable_qsv ))
     doc.add( 'FEATURE.vce',        int( options.enable_vce ))
     doc.add( 'FEATURE.x265',       int( options.enable_x265 ))
@@ -2133,6 +2142,8 @@ int main()
     stdout.write( '  (%s)\n' % note_required ) if host_tuple.system != 'darwin' else stdout.write( '\n' )
     stdout.write( 'Enable NVENC:       %s' % options.enable_nvenc )
     stdout.write( ' (%s)\n' % note_unsupported ) if not (host_tuple.system == 'linux' or host_tuple.system == 'mingw') else stdout.write( '\n' )
+    stdout.write( 'Enable VAAPI:       %s' % options.enable_vaapi )
+    stdout.write( ' (%s)\n' % note_unsupported ) if not (host_tuple.system == 'linux' or host_tuple.system == 'freebsd' or host_tuple.system == 'mingw') else stdout.write( '\n' )
     stdout.write( 'Enable QSV:         %s' % options.enable_qsv )
     stdout.write( ' (%s)\n' % note_unsupported ) if not (host_tuple.system == 'linux' or host_tuple.system == 'freebsd' or host_tuple.system == 'mingw') else stdout.write( '\n' )
     stdout.write( 'Enable VCE:         %s' % options.enable_vce )

@@ -27,6 +27,11 @@
 #endif
 #endif
 
+#if HB_PROJECT_FEATURE_VAAPI
+static const char * vaapi_device0 = NULL; // "/dev/dri/renderD128";
+AVBufferRef *vaapi_device_ctx0 = NULL; // reused in vaapi_common.c
+#endif
+
 struct hb_handle_s
 {
     int            id;
@@ -77,7 +82,29 @@ static void thread_func( void * );
 
 void hb_avcodec_init()
 {
+#if HB_PROJECT_FEATURE_VAAPI
+    {
+        int err;
+        if( (err = av_hwdevice_ctx_create(&vaapi_device_ctx0, AV_HWDEVICE_TYPE_VAAPI,
+                                         vaapi_device0, NULL, 0)) < 0 ) {
+            hb_log("Failed to create a VAAPI device. Error code: %s %p\n", av_err2str(err), vaapi_device_ctx0);
+            vaapi_device_ctx0 = NULL;
+        }
+    }
+#endif
 }
+
+static void hb_avcodec_free()
+{
+#if HB_PROJECT_FEATURE_VAAPI
+    if( NULL != vaapi_device_ctx0 ) {
+        av_buffer_unref(&vaapi_device_ctx0);
+        vaapi_device_ctx0 = NULL;
+    }
+#endif
+}
+
+
 
 int hb_avcodec_open(AVCodecContext *avctx, AVCodec *codec,
                     AVDictionary **av_opts, int thread_count)
@@ -111,7 +138,6 @@ void hb_avcodec_free_context(AVCodecContext **avctx)
 {
     avcodec_free_context(avctx);
 }
-
 
 int hb_picture_fill(uint8_t *data[], int stride[], hb_buffer_t *buf)
 {
@@ -1921,6 +1947,9 @@ void hb_global_close()
         rmdir( dirname );
     }
     free(dirname);
+
+    /* libavcodec */
+    hb_avcodec_free();
 }
 
 /**
