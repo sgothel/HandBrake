@@ -43,7 +43,6 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <mfx/mfxvideo.h>
 
 extern AVBufferRef *hb_hw_device_ctx;
-EncQSVFramesContext hb_enc_qsv_frames_ctx;
 
 /*
  * The frame info struct remembers information about each frame across calls to
@@ -554,7 +553,7 @@ static int qsv_setup_mids(mfxFrameAllocResponse *resp, AVBufferRef *hw_frames_re
 static mfxStatus hb_qsv_frame_alloc(mfxHDL pthis, mfxFrameAllocRequest *req,
                                  mfxFrameAllocResponse *resp)
 {
-    EncQSVFramesContext *ctx = pthis;
+    HBQSVFramesContext *ctx = pthis;
     int ret;
 
     /* this should only be called from an encoder or decoder and
@@ -747,12 +746,8 @@ int qsv_enc_init(hb_work_private_t *pv)
 
     if (qsv == NULL)
     {
-        if (!pv->is_sys_mem)
-        {
-            hb_error("qsv_enc_init: decode enabled but no context!");
-            return 3;
-        }
-        job->qsv.ctx = qsv = av_mallocz(sizeof(hb_qsv_context));
+        hb_error("qsv_enc_init: no context!");
+        return 3;
     }
 
     hb_qsv_space *qsv_encode = qsv->enc_space;
@@ -761,9 +756,6 @@ int qsv_enc_init(hb_work_private_t *pv)
         // if only for encode
         if (pv->is_sys_mem)
         {
-            // no need to use additional sync as encode only -> single thread
-            hb_qsv_add_context_usage(qsv, 0);
-
             // re-use the session from encqsvInit
             qsv->mfx_session = pv->mfx_session;
         }
@@ -795,13 +787,18 @@ int qsv_enc_init(hb_work_private_t *pv)
             // reuse parent session
             qsv->mfx_session = parent_session;
             mfxFrameAllocator frame_allocator = {
-                .pthis  = &hb_enc_qsv_frames_ctx,
+                .pthis  = pv->job->qsv.ctx->hb_dec_qsv_frames_ctx,
                 .Alloc  = hb_qsv_frame_alloc,
                 .Lock   = hb_qsv_frame_lock,
                 .Unlock = hb_qsv_frame_unlock,
                 .GetHDL = hb_qsv_frame_get_hdl,
                 .Free   = hb_qsv_frame_free,
             };
+
+            if (hb_qsv_hw_filters_are_enabled(pv->job))
+            {
+                frame_allocator.pthis = pv->job->qsv.ctx->hb_vpp_qsv_frames_ctx;
+            }
 
             err = MFXVideoCORE_SetFrameAllocator(qsv->mfx_session, &frame_allocator);
             if (err != MFX_ERR_NONE)
@@ -1764,8 +1761,7 @@ void encqsvClose(hb_work_object_t *w)
                 hb_qsv_unload_plugins(&pv->loaded_plugins, qsv_ctx->mfx_session, version);
             }
 
-            /* QSV context cleanup and MFXClose */
-            hb_qsv_context_clean(qsv_ctx,hb_qsv_full_path_is_enabled(pv->job));
+            hb_qsv_uninit_enc(pv->job);
 
             hb_display_close(&pv->display);
 
@@ -1809,14 +1805,7 @@ void encqsvClose(hb_work_object_t *w)
                 }
                 qsv_enc_space->is_init_done = 0;
             }
-
-            if (pv->is_sys_mem)
-            {
-                av_freep(&qsv_ctx);
-            }
         }
-
-        hb_qsv_uninit_enc();
     }
 
     if (pv != NULL)
@@ -2056,7 +2045,8 @@ fail:
 
 static int qsv_enc_work(hb_work_private_t *pv,
                         hb_qsv_list *qsv_atom,
-                        mfxFrameSurface1 *surface)
+                        mfxFrameSurface1 *surface,
+                        HBQSVFramesContext *frames_ctx)
 {
     mfxStatus sts;
     hb_qsv_context *qsv_ctx       = pv->job->qsv.ctx;
@@ -2100,12 +2090,13 @@ static int qsv_enc_work(hb_work_private_t *pv,
             }
             else
             {
-                hb_qsv_stage *new_stage = hb_qsv_stage_init();
-                new_stage->type         = HB_QSV_ENCODE;
-                new_stage->in.p_surface = surface;
-                new_stage->out.sync     = qsv_enc_space->p_syncp[sync_idx];
-                new_stage->out.p_bs     = task->bs;
-                task->stage             = new_stage;
+                hb_qsv_stage *new_stage        = hb_qsv_stage_init();
+                new_stage->type                = HB_QSV_ENCODE;
+                new_stage->in.p_surface        = surface;
+                new_stage->in.p_frames_ctx     = frames_ctx;
+                new_stage->out.sync            = qsv_enc_space->p_syncp[sync_idx];
+                new_stage->out.p_bs            = task->bs;
+                task->stage                    = new_stage;
                 pv->async_depth++;
 
                 if (qsv_atom != NULL)
@@ -2152,10 +2143,11 @@ static int qsv_enc_work(hb_work_private_t *pv,
                 /* perform a sync operation to get the output bitstream */
                 hb_qsv_wait_on_sync(qsv_ctx, task->stage);
 
-                mfxFrameSurface1 *surface = task->stage->in.p_surface;
+                mfxFrameSurface1   *surface    = task->stage->in.p_surface;
+                HBQSVFramesContext *frames_ctx = task->stage->in.p_frames_ctx;
                 if(!pv->is_sys_mem && surface)
                 {
-                    hb_qsv_release_surface_from_pool(surface->Data.MemId);
+                    hb_qsv_release_surface_from_pool_by_surface_pointer(frames_ctx, surface);
                 }
 
                 if (task->bs->DataLength > 0)
@@ -2205,14 +2197,15 @@ int encqsvWork(hb_work_object_t *w, hb_buffer_t **buf_in, hb_buffer_t **buf_out)
      */
     if (in->s.flags & HB_BUF_FLAG_EOF)
     {
-        qsv_enc_work(pv, NULL, NULL);
+        qsv_enc_work(pv, NULL, NULL, NULL);
         hb_buffer_list_append(&pv->encoded_frames, in);
         *buf_out = hb_buffer_list_clear(&pv->encoded_frames);
         *buf_in = NULL; // don't let 'work_loop' close this buffer
         return HB_WORK_DONE;
     }
 
-    mfxFrameSurface1 *surface       = NULL;
+    mfxFrameSurface1   *surface     = NULL;
+    HBQSVFramesContext *frames_ctx  = NULL;
     hb_qsv_list      *qsv_atom      = NULL;
     hb_qsv_context   *qsv_ctx       = job->qsv.ctx;
     hb_qsv_space     *qsv_enc_space = job->qsv.ctx->enc_space;
@@ -2238,22 +2231,16 @@ int encqsvWork(hb_work_object_t *w, hb_buffer_t **buf_in, hb_buffer_t **buf_out)
         if(in->qsv_details.frame)
         {
             surface = ((mfxFrameSurface1*)in->qsv_details.frame->data[3]);
-            mid = surface->Data.MemId;
+            frames_ctx = in->qsv_details.qsv_frames_ctx;
+            hb_qsv_get_mid_by_surface_from_pool(frames_ctx, surface, &mid);
         }
         else
         {
             // Create black buffer in the begining of the encoding, usually first 2 frames
-            hb_qsv_get_free_surface_from_pool(HB_POOL_SURFACE_SIZE - HB_POOL_ENCODER_SIZE, HB_POOL_SURFACE_SIZE, &mid, &surface);
+            hb_qsv_get_free_surface_from_pool_with_range(pv->job->qsv.ctx->hb_dec_qsv_frames_ctx, HB_QSV_POOL_SURFACE_SIZE - HB_QSV_POOL_ENCODER_SIZE, HB_QSV_POOL_SURFACE_SIZE, &mid, &surface);
+            frames_ctx = pv->job->qsv.ctx->hb_dec_qsv_frames_ctx;
         }
-
-        if(surface)
-        {
-            hb_qsv_replace_surface_mid(mid, surface);
-        }
-        else
-        {
-            goto fail;
-        }
+        hb_qsv_replace_surface_mid(frames_ctx, mid, surface);
 #endif
         // At this point, enc_qsv takes ownership of the QSV resources
         // in the 'in' buffer.
@@ -2309,7 +2296,7 @@ int encqsvWork(hb_work_object_t *w, hb_buffer_t **buf_in, hb_buffer_t **buf_out)
     {
         mfxStatus sts;
 
-        if (qsv_enc_work(pv, NULL, NULL) < 0)
+        if (qsv_enc_work(pv, NULL, NULL, NULL) < 0)
         {
             goto fail;
         }
@@ -2347,7 +2334,7 @@ int encqsvWork(hb_work_object_t *w, hb_buffer_t **buf_in, hb_buffer_t **buf_out)
     /*
      * Now that the input surface is setup, we can encode it.
      */
-    if (qsv_enc_work(pv, qsv_atom, surface) < 0)
+    if (qsv_enc_work(pv, qsv_atom, surface, frames_ctx) < 0)
     {
         goto fail;
     }

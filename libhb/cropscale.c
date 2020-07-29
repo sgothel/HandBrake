@@ -9,6 +9,11 @@
 
 #include "handbrake/common.h"
 #include "handbrake/avfilter_priv.h"
+#if HB_PROJECT_FEATURE_QSV && (defined( _WIN32 ) || defined( __MINGW32__ ))
+#include "handbrake/qsv_common.h"
+#include "libavutil/hwcontext_qsv.h"
+#include "libavutil/hwcontext.h"
+#endif
 
 static int crop_scale_init(hb_filter_object_t * filter,
                            hb_filter_init_t * init);
@@ -86,51 +91,92 @@ static int crop_scale_init(hb_filter_object_t * filter, hb_filter_init_t * init)
     hb_dict_t * avfilter   = hb_dict_init();
     hb_dict_t * avsettings = hb_dict_init();
 
-    hb_dict_set_int(avsettings, "width", width);
-    hb_dict_set_int(avsettings, "height", height);
-    hb_dict_set_string(avsettings, "flags", "lanczos+accurate_rnd");
-    switch (init->color_matrix)
+#if HB_PROJECT_FEATURE_QSV && (defined( _WIN32 ) || defined( __MINGW32__ ))
+    if (hb_qsv_hw_filters_are_enabled(init->job))
     {
-        case HB_COLR_MAT_BT709:
-            matrix = "bt709";
-            break;
-        case HB_COLR_MAT_FCC:
-            matrix = "fcc";
-            break;
-        case HB_COLR_MAT_SMPTE240M:
-            matrix = "smpte240m";
-            break;
-        case HB_COLR_MAT_BT470BG:
-        case HB_COLR_MAT_SMPTE170M:
-            matrix = "smpte170m";
-            break;
-        case HB_COLR_MAT_BT2020_NCL:
-        case HB_COLR_MAT_BT2020_CL:
-            matrix = "bt2020";
-            break;
-        default:
-        case HB_COLR_MAT_UNDEF:
-            matrix = NULL;
-            break;
+        hb_dict_set_int(avsettings, "w", width);
+        hb_dict_set_int(avsettings, "h", height);
+        hb_dict_set(avfilter, "scale_qsv", avsettings);
+        int result = hb_create_ffmpeg_pool(width, height, AV_PIX_FMT_NV12, HB_QSV_POOL_SURFACE_SIZE, 0, &init->job->qsv.ctx->hb_vpp_qsv_frames_ctx->hw_frames_ctx);
+        if (result < 0)
+        {
+            hb_error("hb_create_ffmpeg_pool vpp allocation failed");
+            return result;
+        }
 
+        AVHWFramesContext *frames_ctx;
+        AVQSVFramesContext *frames_hwctx;
+        AVBufferRef *hw_frames_ctx;
+
+        hw_frames_ctx = init->job->qsv.ctx->hb_vpp_qsv_frames_ctx->hw_frames_ctx;
+        frames_ctx   = (AVHWFramesContext*)hw_frames_ctx->data;
+        frames_hwctx = frames_ctx->hwctx;
+        init->job->qsv.ctx->hb_vpp_qsv_frames_ctx->input_texture = frames_hwctx->texture;
+        
+        /* allocate the memory ids for the external frames */
+        av_buffer_unref(&init->job->qsv.ctx->hb_vpp_qsv_frames_ctx->mids_buf);
+        init->job->qsv.ctx->hb_vpp_qsv_frames_ctx->mids_buf = hb_qsv_create_mids(init->job->qsv.ctx->hb_vpp_qsv_frames_ctx->hw_frames_ctx);
+        if (!init->job->qsv.ctx->hb_vpp_qsv_frames_ctx->mids_buf)
+            return AVERROR(ENOMEM);
+        init->job->qsv.ctx->hb_vpp_qsv_frames_ctx->mids    = (QSVMid*)init->job->qsv.ctx->hb_vpp_qsv_frames_ctx->mids_buf->data;
+        init->job->qsv.ctx->hb_vpp_qsv_frames_ctx->nb_mids = frames_hwctx->nb_surfaces;
+        memset(init->job->qsv.ctx->hb_vpp_qsv_frames_ctx->pool, 0, init->job->qsv.ctx->hb_vpp_qsv_frames_ctx->nb_mids * sizeof(init->job->qsv.ctx->hb_vpp_qsv_frames_ctx->pool[0]));
     }
-    if (matrix != NULL)
+    else
+#endif
     {
-        hb_dict_set_string(avsettings, "in_color_matrix", matrix);
-        hb_dict_set_string(avsettings, "out_color_matrix", matrix);
+        hb_dict_set_int(avsettings, "width", width);
+        hb_dict_set_int(avsettings, "height", height);
+        hb_dict_set_string(avsettings, "flags", "lanczos+accurate_rnd");
+
+        switch (init->color_matrix)
+        {
+            case HB_COLR_MAT_BT709:
+                matrix = "bt709";
+                break;
+            case HB_COLR_MAT_FCC:
+                matrix = "fcc";
+                break;
+            case HB_COLR_MAT_SMPTE240M:
+                matrix = "smpte240m";
+                break;
+            case HB_COLR_MAT_BT470BG:
+            case HB_COLR_MAT_SMPTE170M:
+                matrix = "smpte170m";
+                break;
+            case HB_COLR_MAT_BT2020_NCL:
+            case HB_COLR_MAT_BT2020_CL:
+                matrix = "bt2020";
+                break;
+            default:
+            case HB_COLR_MAT_UNDEF:
+                matrix = NULL;
+                break;
+        }
+        if (matrix != NULL)
+        {
+            hb_dict_set_string(avsettings, "in_color_matrix", matrix);
+            hb_dict_set_string(avsettings, "out_color_matrix", matrix);
+        }
+        hb_dict_set_string(avsettings, "out_range", "limited");
+        hb_dict_set(avfilter, "scale", avsettings);
     }
-    hb_dict_set_string(avsettings, "out_range", "limited");
-    hb_dict_set(avfilter, "scale", avsettings);
+    
     hb_value_array_append(avfilters, avfilter);
 
     avfilter   = hb_dict_init();
     avsettings = hb_dict_init();
 
-    // TODO: Support other pix formats
-    // Force output to YUV420P for until other formats are supported
-    hb_dict_set(avsettings, "pix_fmts", hb_value_string("yuv420p"));
-    hb_dict_set(avfilter, "format", avsettings);
-    hb_value_array_append(avfilters, avfilter);
+#if HB_PROJECT_FEATURE_QSV && (defined( _WIN32 ) || defined( __MINGW32__ ))
+    if (!hb_qsv_hw_filters_are_enabled(init->job))
+#endif
+    {
+        // TODO: Support other pix formats
+        // Force output to YUV420P for until other formats are supported
+        hb_dict_set(avsettings, "pix_fmts", hb_value_string("yuv420p"));
+        hb_dict_set(avfilter, "format", avsettings);
+        hb_value_array_append(avfilters, avfilter);
+    }
 
     init->crop[0] = top;
     init->crop[1] = bottom;

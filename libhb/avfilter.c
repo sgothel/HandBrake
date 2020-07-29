@@ -11,6 +11,10 @@
 #include "handbrake/hbavfilter.h"
 #include "handbrake/avfilter_priv.h"
 
+#if HB_PROJECT_FEATURE_QSV && (defined( _WIN32 ) || defined( __MINGW32__ ))
+#include "handbrake/qsv_common.h"
+#endif
+
 static int  avfilter_init(hb_filter_object_t * filter, hb_filter_init_t * init);
 static int  avfilter_post_init( hb_filter_object_t * filter, hb_job_t * job );
 static void avfilter_close( hb_filter_object_t * filter );
@@ -231,16 +235,38 @@ void hb_avfilter_alias_close( hb_filter_object_t * filter )
 static hb_buffer_t* filterFrame( hb_filter_private_t * pv, hb_buffer_t * in )
 {
     hb_buffer_list_t   list;
-    hb_buffer_t      * buf, * next;
-
-    hb_avfilter_add_buf(pv->graph, in);
-    buf = hb_avfilter_get_buf(pv->graph);
+    hb_buffer_t      * buf = NULL, * next = NULL;
+    int av_frame_is_not_null = 1; // TODO: find the reason for emply input av_frame for ffmpeg filters
+#if HB_PROJECT_FEATURE_QSV && (defined( _WIN32 ) || defined( __MINGW32__ ))
+    mfxFrameSurface1 *surface = NULL;
+    HBQSVFramesContext *frames_ctx = NULL;
+    // We need to keep surface pointer because hb_avfilter_add_buf set it to 0 after in ffmpeg call
+    if (hb_qsv_hw_filters_are_enabled(pv->input.job) && in && in->qsv_details.frame)
+    {
+        surface = (mfxFrameSurface1 *)in->qsv_details.frame->data[3];
+        frames_ctx = in->qsv_details.qsv_frames_ctx;
+    }
+    else
+    {
+        av_frame_is_not_null = 0;
+    }
+#endif
+    if (av_frame_is_not_null)
+    {
+        hb_avfilter_add_buf(pv->graph, in);
+        buf = hb_avfilter_get_buf(pv->graph);
+    }
     while (buf != NULL)
     {
         hb_buffer_list_append(&pv->list, buf);
         buf = hb_avfilter_get_buf(pv->graph);
     }
-
+#if HB_PROJECT_FEATURE_QSV && (defined( _WIN32 ) || defined( __MINGW32__ ))
+    if (hb_qsv_hw_filters_are_enabled(pv->input.job) && surface)
+    {
+        hb_qsv_release_surface_from_pool_by_surface_pointer(frames_ctx, surface);
+    }
+#endif
     // Delay one frame so we can set the stop time of the output buffer
     hb_buffer_list_clear(&list);
     while (hb_buffer_list_count(&pv->list) > 1)
