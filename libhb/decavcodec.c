@@ -954,7 +954,7 @@ static hb_buffer_t *copy_frame( hb_work_private_t *pv )
     if (pv->qsv.decode &&
         pv->qsv.config.io_pattern == MFX_IOPATTERN_OUT_VIDEO_MEMORY)
     {
-        out = hb_qsv_copy_frame(pv->frame, pv->job->qsv.ctx);
+        out = hb_qsv_copy_frame(pv->job, pv->frame, 0);
     }
     else
 #endif
@@ -1173,16 +1173,26 @@ int reinit_video_filters(hb_work_private_t * pv)
         orig_width         != pv->frame->width  ||
         orig_height        != pv->frame->height)
     {
-
         settings = hb_dict_init();
-        hb_dict_set(settings, "w", hb_value_int(orig_width));
-        hb_dict_set(settings, "h", hb_value_int(orig_height));
-        hb_dict_set(settings, "flags", hb_value_string("lanczos+accurate_rnd"));
-        hb_avfilter_append_dict(filters, "scale", settings);
+#if HB_PROJECT_FEATURE_QSV && (defined( _WIN32 ) || defined( __MINGW32__ ))
+        if (hb_qsv_hw_filters_are_enabled(pv->job))
+        {
+            hb_dict_set(settings, "w", hb_value_int(orig_width));
+            hb_dict_set(settings, "h", hb_value_int(orig_height));
+            hb_avfilter_append_dict(filters, "scale_qsv", settings);
+        }
+        else
+#endif
+        {
+            hb_dict_set(settings, "w", hb_value_int(orig_width));
+            hb_dict_set(settings, "h", hb_value_int(orig_height));
+            hb_dict_set(settings, "flags", hb_value_string("lanczos+accurate_rnd"));
+            hb_avfilter_append_dict(filters, "scale", settings);
 
-        settings = hb_dict_init();
-        hb_dict_set(settings, "pix_fmts", hb_value_string("yuv420p"));
-        hb_avfilter_append_dict(filters, "format", settings);
+            settings = hb_dict_init();
+            hb_dict_set(settings, "pix_fmts", hb_value_string("yuv420p"));
+            hb_avfilter_append_dict(filters, "format", settings);
+        }
     }
     if (pv->title->rotation != HB_ROTATION_0)
     {
@@ -1210,6 +1220,7 @@ int reinit_video_filters(hb_work_private_t * pv)
         }
     }
 
+    filter_init.job               = pv->job;
     filter_init.pix_fmt           = pv->frame->format;
     filter_init.geometry.width    = pv->frame->width;
     filter_init.geometry.height   = pv->frame->height;
@@ -1396,15 +1407,23 @@ static int decavcodecvInit( hb_work_object_t * w, hb_job_t * job )
                     // more surfaces may be needed for the lookahead
                     pv->qsv.config.additional_buffers = 160;
                 }
-                if(!pv->job->qsv.ctx)
+                if (!pv->job->qsv.ctx)
                 {
-                    pv->job->qsv.ctx = av_mallocz(sizeof(hb_qsv_context));
-                    if(!pv->job->qsv.ctx)
+                    hb_error( "decavcodecvInit: no context" );
+                    return 1;
+                }
+                if (!pv->job->qsv.ctx->hb_dec_qsv_frames_ctx)
+                {
+                    pv->job->qsv.ctx->hb_dec_qsv_frames_ctx = av_mallocz(sizeof(HBQSVFramesContext));
+                    if(!pv->job->qsv.ctx->hb_dec_qsv_frames_ctx)
                     {
-                        hb_error( "decavcodecvInit: qsv ctx alloc failed" );
+                        hb_error( "decavcodecvInit: HBQSVFramesContext dec alloc failed" );
                         return 1;
                     }
-                    hb_qsv_add_context_usage(pv->job->qsv.ctx, 0);
+                }
+                hb_qsv_update_frames_context(pv->job);
+                if (!pv->job->qsv.ctx->dec_space)
+                {
                     pv->job->qsv.ctx->dec_space = av_mallocz(sizeof(hb_qsv_space));
                     if(!pv->job->qsv.ctx->dec_space)
                     {

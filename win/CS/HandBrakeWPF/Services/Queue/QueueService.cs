@@ -12,10 +12,10 @@ namespace HandBrakeWPF.Services.Queue
     using System;
     using System.Collections.Generic;
     using System.Collections.ObjectModel;
-    using System.Diagnostics;
     using System.IO;
     using System.Linq;
     using System.Windows;
+    using System.Windows.Media.Animation;
 
     using Caliburn.Micro;
 
@@ -39,12 +39,12 @@ namespace HandBrakeWPF.Services.Queue
 
     using Newtonsoft.Json;
 
-    using EncodeCompletedEventArgs = HandBrakeWPF.Services.Encode.EventArgs.EncodeCompletedEventArgs;
+    using EncodeCompletedEventArgs = Encode.EventArgs.EncodeCompletedEventArgs;
     using Execute = Caliburn.Micro.Execute;
-    using GeneralApplicationException = HandBrakeWPF.Exceptions.GeneralApplicationException;
-    using ILog = HandBrakeWPF.Services.Logging.Interfaces.ILog;
-    using QueueCompletedEventArgs = HandBrakeWPF.EventArgs.QueueCompletedEventArgs;
-    using QueueProgressEventArgs = HandBrakeWPF.EventArgs.QueueProgressEventArgs;
+    using GeneralApplicationException = Exceptions.GeneralApplicationException;
+    using ILog = Logging.Interfaces.ILog;
+    using QueueCompletedEventArgs = EventArgs.QueueCompletedEventArgs;
+    using QueueProgressEventArgs = EventArgs.QueueProgressEventArgs;
 
     public class QueueService : IQueueService
     {
@@ -62,6 +62,8 @@ namespace HandBrakeWPF.Services.Queue
         private readonly ObservableCollection<QueueTask> queue = new ObservableCollection<QueueTask>();
         private readonly string queueFile;
         private readonly object queueFileLock = new object();
+
+        private readonly QueueResourceService hardwareEncoderResourceManager = new QueueResourceService();
 
         private int allowedInstances;
         private int jobIdCounter = 0;
@@ -231,7 +233,7 @@ namespace HandBrakeWPF.Services.Queue
 
                     if (result == MessageBoxResult.Yes)
                     {
-                        this.Stop();
+                        this.Stop(true);
 
                         foreach (QueueTask task in duplicates)
                         {
@@ -330,7 +332,12 @@ namespace HandBrakeWPF.Services.Queue
         {
             if (this.queue.Count > 0)
             {
-                return this.queue.FirstOrDefault(q => q.Status == QueueItemStatus.Waiting);
+                QueueTask task = this.queue.FirstOrDefault(q => q.Status == QueueItemStatus.Waiting);
+                if (task != null)
+                {
+                    task.HardwareResourceToken = this.hardwareEncoderResourceManager.GetHardwareLock(task.Task.VideoEncoder);
+                    return task;
+                }
             }
 
             return null;
@@ -448,13 +455,16 @@ namespace HandBrakeWPF.Services.Queue
             }
         }
 
-        public void Pause()
+        public void Pause(bool pauseJobs)
         {
-            foreach (ActiveJob job in this.activeJobs)
+            if (pauseJobs)
             {
-                if (job.IsEncoding && !job.IsPaused)
+                foreach (ActiveJob job in this.activeJobs)
                 {
-                    job.Pause();
+                    if (job.IsEncoding && !job.IsPaused)
+                    {
+                        job.Pause();
+                    }
                 }
             }
             
@@ -486,20 +496,27 @@ namespace HandBrakeWPF.Services.Queue
             this.IsProcessing = true;
         }
 
-        public void Stop()
+        public void Stop(bool stopExistingJobs)
         {
-            foreach (ActiveJob job in this.activeJobs)
+            if (stopExistingJobs)
             {
-                if (job.IsEncoding || job.IsPaused)
+                foreach (ActiveJob job in this.activeJobs)
                 {
-                    job.Stop();
+                    if (job.IsEncoding || job.IsPaused)
+                    {
+                        job.Stop();
+                    }
                 }
             }
 
             this.IsProcessing = false;
             this.IsPaused = false;
-            this.InvokeQueueChanged(EventArgs.Empty);
-            this.InvokeQueueCompleted(new QueueCompletedEventArgs(true));
+
+            if (stopExistingJobs || this.activeJobs.Count == 0)
+            {
+                this.InvokeQueueChanged(EventArgs.Empty);
+                this.InvokeQueueCompleted(new QueueCompletedEventArgs(true));
+            }
         }
 
         public List<QueueProgressStatus> GetQueueProgressStatus()
@@ -569,6 +586,12 @@ namespace HandBrakeWPF.Services.Queue
             QueueTask job = this.GetNextJobForProcessing();
             if (job != null)
             {
+                // Hardware encoders can typically only have 1 or two instances running at any given time. As such, we must have a  HardwareResourceToken to continue.
+                if (job.HardwareResourceToken == Guid.Empty)
+                {
+                    return; // Hardware is busy, we'll try again later when another job completes.
+                }
+
                 if (CheckDiskSpace(job))
                 {
                     return; // Don't start the next job.
@@ -608,12 +631,19 @@ namespace HandBrakeWPF.Services.Queue
 
         private void ActiveJob_JobFinished(object sender, ActiveJobCompletedEventArgs e)
         {
+            this.hardwareEncoderResourceManager.UnlockHardware(e.Job.Job.Task.VideoEncoder, e.Job.Job.HardwareResourceToken);
+
             this.activeJobs.Remove(e.Job);
             this.OnEncodeCompleted(e.EncodeEventArgs);
 
             if (!this.IsPaused && this.IsProcessing)
             {
                 this.ProcessNextJob();
+            }
+            else
+            {
+                this.InvokeQueueChanged(EventArgs.Empty);
+                this.InvokeQueueCompleted(new QueueCompletedEventArgs(true));
             }
         }
 
@@ -671,7 +701,7 @@ namespace HandBrakeWPF.Services.Queue
             {
                 this.logService.LogMessage(Resources.PauseOnLowDiskspace);
                 job.Status = QueueItemStatus.Waiting;
-                this.Pause();
+                this.Pause(true);
                 this.BackupQueue(string.Empty);
                 return true; // Don't start the next job.
             }
