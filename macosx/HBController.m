@@ -210,8 +210,8 @@ static void *HBControllerLogLevelContext = &HBControllerLogLevelContext;
         self.window.tabbingMode = NSWindowTabbingModeDisallowed;
     }
 
-#if defined(NSAppKitVersionNumber10_15)
-    if (@available (macOS 10.16, *))
+#if defined(__MAC_11_0)
+    if (@available (macOS 11, *))
     {
         self.window.toolbarStyle = NSWindowToolbarStyleExpanded;
     }
@@ -806,6 +806,8 @@ static void *HBControllerLogLevelContext = &HBControllerLogLevelContext;
 
 - (void)openURL:(NSURL *)fileURL titleIndex:(NSUInteger)index
 {
+    [self showWindow:self];
+
     [self scanURL:fileURL titleIndex:index completionHandler:^(NSArray<HBTitle *> *titles)
     {
         if (titles.count)
