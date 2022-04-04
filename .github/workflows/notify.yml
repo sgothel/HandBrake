@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Handle Commit
-        uses: rectalogic/notify-irc@v1
+        uses: rectalogic/notify-irc@v2
         if: github.event_name == 'push' && github.repository == 'HandBrake/HandBrake'
         with:
           channel: "#handbrake"
@@ -21,7 +21,7 @@ jobs:
           message: |
             COMMIT: ${{ github.actor }} pushed ${{ github.event.ref }} ${{ github.event.compare }} ${{ join(github.event.commits.*.message) }}
       - name: Handle Pull Request
-        uses: rectalogic/notify-irc@v1
+        uses: rectalogic/notify-irc@v2
         if: github.event_name == 'pull_request' && github.repository == 'HandBrake/HandBrake'
         with:
           channel: "#handbrake"
