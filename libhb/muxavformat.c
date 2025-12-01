@@ -418,34 +418,8 @@ static int avformatInit( hb_mux_object_t * m )
 
         case HB_VCODEC_FFMPEG_QSV_AV1_10BIT:
         case HB_VCODEC_FFMPEG_QSV_AV1:
-        {
-            const AVBitStreamFilter  *bsf;
-            AVBSFContext             *ctx;
-            int                       ret;
-
             track->st->codecpar->codec_id = AV_CODEC_ID_AV1;
-
-            bsf = av_bsf_get_by_name("extract_extradata");
-            ret = av_bsf_alloc(bsf, &ctx);
-            if (ret < 0)
-            {
-                hb_error("AV1 bitstream filter: alloc failure");
-                goto error;
-            }
-
-            track->bitstream_context = ctx;
-            if (track->bitstream_context != NULL)
-            {
-                avcodec_parameters_copy(track->bitstream_context->par_in,
-                                       track->st->codecpar);
-                ret = av_bsf_init(track->bitstream_context);
-                if (ret < 0)
-                {
-                    hb_error("AV1 bitstream filter: init failure");
-                    goto error;
-                }
-            }
-        } break;
+            break;
 
         case HB_VCODEC_THEORA:
             track->st->codecpar->codec_id = AV_CODEC_ID_THEORA;
@@ -483,6 +457,38 @@ static int avformatInit( hb_mux_object_t * m )
         default:
             hb_error("muxavformat: Unknown video codec: %x", job->vcodec);
             goto error;
+    }
+
+    if (hb_vcodec_is_qsv_av1(job->vcodec) ||
+        hb_vcodec_is_vaapi(job->vcodec))
+    {
+        const AVBitStreamFilter  *bsf;
+        AVBSFContext             *ctx;
+        int                       ret;
+
+        bsf = av_bsf_get_by_name("extract_extradata");
+        ret = av_bsf_alloc(bsf, &ctx);
+        if (ret < 0)
+        {
+            hb_error("muxavformat: extradata bitstream filter: alloc failure");
+            goto error;
+        }
+
+        track->bitstream_context = ctx;
+        if (track->bitstream_context != NULL)
+        {
+            avcodec_parameters_copy(track->bitstream_context->par_in,
+                                   track->st->codecpar);
+            ret = av_bsf_init(track->bitstream_context);
+            if (ret < 0)
+            {
+                hb_error("muxavformat: extradata bitstream filter: init failure");
+                goto error;
+            }
+        }
+        const size_t esz = job->extradata ? job->extradata->size : 0;
+        hb_log("muxavformat: extradata bitstream filter added, extradata size %zu, bsf-ctx %d",
+                esz, NULL != track->bitstream_context);
     }
 
     if (set_extradata(job->extradata, &track->st->codecpar->extradata, &track->st->codecpar->extradata_size))
